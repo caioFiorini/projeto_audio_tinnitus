@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
-type SoundId = "pink" | "brown" | "rain" | "ocean" | "night";
+type NoiseId = "pink" | "brown" | "rain" | "ocean" | "night";
+type SoundId = NoiseId | "custom";
+type CustomNoiseBase = "pink" | "brown";
+type CustomWave = "sine" | "triangle";
 type JournalEntry = {
   id: number;
   date: string;
@@ -52,11 +55,18 @@ const sounds: Array<{
     mark: "◔",
     color: "violet",
   },
+  {
+    id: "custom",
+    name: "Meu som",
+    description: "Frequência e textura ajustáveis",
+    mark: "⌁",
+    color: "custom",
+  },
 ];
 
 const perceptionLabels = ["Muito leve", "Leve", "Moderado", "Intenso", "Muito intenso"];
 
-function makeNoiseBuffer(ctx: AudioContext, id: SoundId) {
+function makeNoiseBuffer(ctx: AudioContext, id: NoiseId) {
   const seconds = 10;
   const length = ctx.sampleRate * seconds;
   const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
@@ -115,6 +125,14 @@ function makeNoiseBuffer(ctx: AudioContext, id: SoundId) {
   return buffer;
 }
 
+function frequencyToSlider(frequency: number) {
+  return (Math.log(frequency / 125) / Math.log(8000 / 125)) * 100;
+}
+
+function sliderToFrequency(position: number) {
+  return Math.round(125 * Math.pow(8000 / 125, position / 100));
+}
+
 function formatTime(seconds: number) {
   const mins = Math.floor(seconds / 60).toString().padStart(2, "0");
   const secs = Math.floor(seconds % 60).toString().padStart(2, "0");
@@ -135,13 +153,21 @@ export default function Home() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [journalSaved, setJournalSaved] = useState(false);
   const [showSafety, setShowSafety] = useState(false);
+  const [customFrequency, setCustomFrequency] = useState(2000);
+  const [customWave, setCustomWave] = useState<CustomWave>("sine");
+  const [customBase, setCustomBase] = useState<CustomNoiseBase>("pink");
+  const [customToneMix, setCustomToneMix] = useState(24);
+  const [customBandwidth, setCustomBandwidth] = useState(58);
+  const [customSaved, setCustomSaved] = useState(false);
 
   const contextRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const sourceRef = useRef<AudioScheduledSourceNode | null>(null);
   const filterRef = useRef<BiquadFilterNode | null>(null);
   const masterRef = useRef<GainNode | null>(null);
   const lfoRef = useRef<OscillatorNode | null>(null);
   const lfoGainRef = useRef<GainNode | null>(null);
+  const customOscillatorRef = useRef<OscillatorNode | null>(null);
+  const customToneGainRef = useRef<GainNode | null>(null);
 
   const currentSound = sounds.find((sound) => sound.id === selected) ?? sounds[0];
   const adjustable = selected === "pink" || selected === "brown";
@@ -150,8 +176,17 @@ export default function Home() {
     try {
       const savedFavorites = localStorage.getItem("brisa-favorites");
       const savedEntries = localStorage.getItem("brisa-journal");
+      const savedCustom = localStorage.getItem("brisa-custom-sound");
       if (savedFavorites) setFavorites(JSON.parse(savedFavorites));
       if (savedEntries) setEntries(JSON.parse(savedEntries));
+      if (savedCustom) {
+        const custom = JSON.parse(savedCustom);
+        if (typeof custom.frequency === "number") setCustomFrequency(Math.min(8000, Math.max(125, custom.frequency)));
+        if (custom.wave === "sine" || custom.wave === "triangle") setCustomWave(custom.wave);
+        if (custom.base === "pink" || custom.base === "brown") setCustomBase(custom.base);
+        if (typeof custom.toneMix === "number") setCustomToneMix(Math.min(60, Math.max(0, custom.toneMix)));
+        if (typeof custom.bandwidth === "number") setCustomBandwidth(Math.min(100, Math.max(0, custom.bandwidth)));
+      }
     } catch {
       // Local preferences are optional; the app keeps working without them.
     }
@@ -174,14 +209,15 @@ export default function Home() {
   }, [isPlaying]);
 
   useEffect(() => {
-    const target = (volume / 35) * 0.12;
+    const effectiveVolume = selected === "custom" ? Math.min(volume, 10) : volume;
+    const target = (effectiveVolume / 35) * 0.12;
     const ctx = contextRef.current;
     const master = masterRef.current;
     if (ctx && master && isPlaying) {
       master.gain.cancelScheduledValues(ctx.currentTime);
       master.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.15);
     }
-  }, [volume, isPlaying]);
+  }, [volume, isPlaying, selected]);
 
   useEffect(() => {
     const filter = filterRef.current;
@@ -192,6 +228,33 @@ export default function Home() {
       filter.frequency.linearRampToValueAtTime(frequency, ctx.currentTime + 0.2);
     }
   }, [tone, adjustable]);
+
+  useEffect(() => {
+    if (selected !== "custom") return;
+    const ctx = contextRef.current;
+    const filter = filterRef.current;
+    const oscillator = customOscillatorRef.current;
+    if (!ctx) return;
+    if (filter) {
+      filter.frequency.cancelScheduledValues(ctx.currentTime);
+      filter.frequency.linearRampToValueAtTime(customFrequency, ctx.currentTime + 0.15);
+      filter.Q.linearRampToValueAtTime(0.5 + ((100 - customBandwidth) / 100) * 5.5, ctx.currentTime + 0.15);
+    }
+    if (oscillator) {
+      oscillator.frequency.cancelScheduledValues(ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(customFrequency, ctx.currentTime + 0.15);
+      oscillator.type = customWave;
+    }
+  }, [customFrequency, customBandwidth, customWave, selected]);
+
+  useEffect(() => {
+    const ctx = contextRef.current;
+    const toneGain = customToneGainRef.current;
+    if (ctx && toneGain && selected === "custom") {
+      toneGain.gain.cancelScheduledValues(ctx.currentTime);
+      toneGain.gain.linearRampToValueAtTime((customToneMix / 100) * 0.18, ctx.currentTime + 0.15);
+    }
+  }, [customToneMix, selected]);
 
   useEffect(() => {
     const lfoGain = lfoGainRef.current;
@@ -205,6 +268,7 @@ export default function Home() {
     return () => {
       sourceRef.current?.stop();
       lfoRef.current?.stop();
+      customOscillatorRef.current?.stop();
       contextRef.current?.close();
     };
   }, []);
@@ -214,6 +278,7 @@ export default function Home() {
     const master = masterRef.current;
     const source = sourceRef.current;
     const lfo = lfoRef.current;
+    const customOscillator = customOscillatorRef.current;
     if (!ctx || !source) return;
 
     const delay = withFade ? 0.32 : 0.03;
@@ -225,15 +290,18 @@ export default function Home() {
       try {
         source.stop();
         lfo?.stop();
+        customOscillator?.stop();
       } catch {
         // Nodes may already be stopped.
       }
     }, delay * 1000 + 40);
     sourceRef.current = null;
     lfoRef.current = null;
+    customOscillatorRef.current = null;
+    customToneGainRef.current = null;
   }
 
-  async function startAudio(soundId: SoundId = selected) {
+  async function startAudio(soundId: SoundId = selected, baseOverride: CustomNoiseBase = customBase) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = contextRef.current ?? new AudioContextClass();
@@ -247,18 +315,18 @@ export default function Home() {
     const lfo = ctx.createOscillator();
     const lfoGain = ctx.createGain();
 
-    source.buffer = makeNoiseBuffer(ctx, soundId);
+    source.buffer = makeNoiseBuffer(ctx, soundId === "custom" ? baseOverride : soundId);
     source.loop = true;
-    filter.type = soundId === "rain" ? "highpass" : "lowpass";
-    const naturalFrequencies: Record<SoundId, number> = {
+    filter.type = soundId === "rain" ? "highpass" : soundId === "custom" ? "bandpass" : "lowpass";
+    const naturalFrequencies: Record<NoiseId, number> = {
       pink: 1100 + Math.pow(tone / 100, 1.35) * 9000,
       brown: 1100 + Math.pow(tone / 100, 1.35) * 9000,
       rain: 820,
       ocean: 2400,
       night: 4300,
     };
-    filter.frequency.value = naturalFrequencies[soundId];
-    filter.Q.value = 0.45;
+    filter.frequency.value = soundId === "custom" ? customFrequency : naturalFrequencies[soundId];
+    filter.Q.value = soundId === "custom" ? 0.5 + ((100 - customBandwidth) / 100) * 5.5 : 0.45;
     master.gain.value = 0;
     compressor.threshold.value = -22;
     compressor.knee.value = 12;
@@ -270,6 +338,17 @@ export default function Home() {
 
     source.connect(filter);
     filter.connect(master);
+    let customOscillator: OscillatorNode | null = null;
+    let customToneGain: GainNode | null = null;
+    if (soundId === "custom") {
+      customOscillator = ctx.createOscillator();
+      customToneGain = ctx.createGain();
+      customOscillator.type = customWave;
+      customOscillator.frequency.value = customFrequency;
+      customToneGain.gain.value = (customToneMix / 100) * 0.18;
+      customOscillator.connect(customToneGain);
+      customToneGain.connect(master);
+    }
     lfo.connect(lfoGain);
     lfoGain.connect(master.gain);
     master.connect(compressor);
@@ -277,7 +356,9 @@ export default function Home() {
 
     source.start();
     lfo.start();
-    const target = (volume / 35) * 0.12;
+    customOscillator?.start();
+    const effectiveVolume = soundId === "custom" ? Math.min(volume, 10) : volume;
+    const target = (effectiveVolume / 35) * 0.12;
     master.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.8);
 
     sourceRef.current = source;
@@ -285,6 +366,8 @@ export default function Home() {
     masterRef.current = master;
     lfoRef.current = lfo;
     lfoGainRef.current = lfoGain;
+    customOscillatorRef.current = customOscillator;
+    customToneGainRef.current = customToneGain;
   }
 
   async function togglePlay() {
@@ -305,6 +388,7 @@ export default function Home() {
     setSelected(id);
     if (id === "brown") setTone(36);
     if (id === "pink") setTone(48);
+    if (id === "custom" && volume > 10) setVolume(8);
     if (wasPlaying) {
       await startAudio(id);
     }
@@ -321,6 +405,30 @@ export default function Home() {
       : [...favorites, id];
     setFavorites(updated);
     localStorage.setItem("brisa-favorites", JSON.stringify(updated));
+  }
+
+  function saveCustomSound() {
+    localStorage.setItem("brisa-custom-sound", JSON.stringify({
+      frequency: customFrequency,
+      wave: customWave,
+      base: customBase,
+      toneMix: customToneMix,
+      bandwidth: customBandwidth,
+    }));
+    setCustomSaved(true);
+    window.setTimeout(() => setCustomSaved(false), 2200);
+  }
+
+  function nudgeFrequency(amount: number) {
+    setCustomFrequency((current) => Math.min(8000, Math.max(125, current + amount)));
+  }
+
+  async function changeCustomBase(base: CustomNoiseBase) {
+    setCustomBase(base);
+    if (isPlaying && selected === "custom") {
+      stopAudio(false);
+      await startAudio("custom", base);
+    }
   }
 
   function saveJournal() {
@@ -352,6 +460,7 @@ export default function Home() {
         </a>
         <nav className="nav-links" aria-label="Navegação principal">
           <a className="active" href="#ouvir">Ouvir</a>
+          <a href="#laboratorio">Criar som</a>
           <a href="#diario">Meu diário</a>
           <button className="help-button" onClick={() => setShowSafety((value) => !value)} aria-expanded={showSafety}>
             <span aria-hidden="true">?</span> Uso cuidadoso
@@ -412,11 +521,11 @@ export default function Home() {
           <div className="volume-control">
             <span aria-hidden="true">◖</span>
             <label className="sr-only" htmlFor="volume">Volume interno</label>
-            <input id="volume" type="range" min="0" max="35" value={volume} onChange={(event) => setVolume(Number(event.target.value))} style={{ "--range-progress": `${(volume / 35) * 100}%` } as React.CSSProperties} />
+            <input id="volume" type="range" min="0" max={selected === "custom" ? 10 : 35} value={volume} onChange={(event) => setVolume(Number(event.target.value))} style={{ "--range-progress": `${(volume / (selected === "custom" ? 10 : 35)) * 100}%` } as React.CSSProperties} />
             <span aria-hidden="true">◗</span>
             <output>{volume}%</output>
           </div>
-          <p className="volume-note"><span aria-hidden="true">⌁</span> Limite interno conservador · comece quase inaudível</p>
+          <p className="volume-note"><span aria-hidden="true">⌁</span> {selected === "custom" ? "Modo personalizado · teto interno reduzido a 10%" : "Limite interno conservador · comece quase inaudível"}</p>
         </article>
 
         <div className="control-column">
@@ -426,28 +535,38 @@ export default function Home() {
               <strong className="time-left">{formatTime(remaining)}</strong>
             </div>
             <div className="timer-options" role="group" aria-label="Duração da sessão">
-              {[15, 30, 45, 60].map((minutes) => (
+              {[5, 15, 30, 45, 60].map((minutes) => (
                 <button key={minutes} className={timerMinutes === minutes ? "active" : ""} onClick={() => setTimer(minutes)}>{minutes} min</button>
               ))}
             </div>
           </article>
 
-          <article className={`control-card adjust-card ${!adjustable ? "disabled" : ""}`}>
+          <article className={`control-card adjust-card ${!adjustable && selected !== "custom" ? "disabled" : ""}`}>
             <div className="card-heading">
-              <div><span className="heading-icon tune" aria-hidden="true">⌁</span><div><h3>Ajuste para seu conforto</h3><p>{adjustable ? `Personalize o ${currentSound.name.toLowerCase()}` : "Disponível nos ruídos rosa e marrom"}</p></div></div>
+              <div><span className="heading-icon tune" aria-hidden="true">⌁</span><div><h3>{selected === "custom" ? "Seu som personalizado" : "Ajuste para seu conforto"}</h3><p>{selected === "custom" ? `${customFrequency.toLocaleString("pt-BR")} Hz · ajustes no laboratório abaixo` : adjustable ? `Personalize o ${currentSound.name.toLowerCase()}` : "Disponível nos ruídos rosa e marrom"}</p></div></div>
               <span className="live-badge">AO VIVO</span>
             </div>
-            <div className="adjustment-row">
-              <div className="slider-label"><label htmlFor="tone">Timbre</label><span>{tone < 40 ? "mais macio" : tone > 66 ? "mais claro" : "equilibrado"}</span></div>
-              <input id="tone" type="range" min="0" max="100" value={tone} disabled={!adjustable} onChange={(event) => setTone(Number(event.target.value))} style={{ "--range-progress": `${tone}%` } as React.CSSProperties} />
-              <div className="range-ends"><span>Grave</span><span>Claro</span></div>
-            </div>
-            <div className="adjustment-row">
-              <div className="slider-label"><label htmlFor="texture">Movimento</label><span>{texture < 35 ? "estável" : texture > 68 ? "envolvente" : "suave"}</span></div>
-              <input id="texture" type="range" min="0" max="100" value={texture} disabled={!adjustable} onChange={(event) => setTexture(Number(event.target.value))} style={{ "--range-progress": `${texture}%` } as React.CSSProperties} />
-              <div className="range-ends"><span>Estável</span><span>Envolvente</span></div>
-            </div>
-            <p className="adjust-tip"><span aria-hidden="true">✦</span> Faça mudanças pequenas e espere alguns instantes antes de ajustar de novo.</p>
+            {selected === "custom" ? (
+              <div className="custom-active-summary">
+                <span className="mini-spectrum" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></span>
+                <div><strong>{customWave === "sine" ? "Onda senoidal" : "Onda triangular"}</strong><small>Base de ruído {customBase === "pink" ? "rosa" : "marrom"} · tom limitado</small></div>
+                <a href="#laboratorio">Ajustar</a>
+              </div>
+            ) : (
+              <>
+                <div className="adjustment-row">
+                  <div className="slider-label"><label htmlFor="tone">Timbre</label><span>{tone < 40 ? "mais macio" : tone > 66 ? "mais claro" : "equilibrado"}</span></div>
+                  <input id="tone" type="range" min="0" max="100" value={tone} disabled={!adjustable} onChange={(event) => setTone(Number(event.target.value))} style={{ "--range-progress": `${tone}%` } as React.CSSProperties} />
+                  <div className="range-ends"><span>Grave</span><span>Claro</span></div>
+                </div>
+                <div className="adjustment-row">
+                  <div className="slider-label"><label htmlFor="texture">Movimento</label><span>{texture < 35 ? "estável" : texture > 68 ? "envolvente" : "suave"}</span></div>
+                  <input id="texture" type="range" min="0" max="100" value={texture} disabled={!adjustable} onChange={(event) => setTexture(Number(event.target.value))} style={{ "--range-progress": `${texture}%` } as React.CSSProperties} />
+                  <div className="range-ends"><span>Estável</span><span>Envolvente</span></div>
+                </div>
+                <p className="adjust-tip"><span aria-hidden="true">✦</span> Faça mudanças pequenas e espere alguns instantes antes de ajustar de novo.</p>
+              </>
+            )}
           </article>
         </div>
       </section>
@@ -469,6 +588,72 @@ export default function Home() {
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="frequency-lab" id="laboratorio" aria-labelledby="lab-title">
+        <div className="lab-intro">
+          <span className="eyebrow"><span /> CRIAÇÃO GUIADA</span>
+          <h2 id="lab-title">Encontre um som parecido com o seu</h2>
+          <p>Compare com calma e pare no tom que parecer mais próximo. Isso cria uma referência pessoal de conforto — não é um exame nem identifica uma frequência clínica.</p>
+          <div className="lab-safety">
+            <span aria-hidden="true">!</span>
+            <div><strong>Antes de testar</strong><p>Comece no volume mínimo. Não tente encobrir completamente o zumbido e interrompa se o tom incomodar, causar pressão, dor ou piora.</p></div>
+          </div>
+        </div>
+
+        <article className="lab-panel">
+          <div className="lab-panel-header">
+            <div><span className="lab-status"><i /> SOM PERSONALIZADO</span><strong>{customFrequency.toLocaleString("pt-BR")} <small>Hz</small></strong><p>{customFrequency < 500 ? "Região grave" : customFrequency < 2000 ? "Região média" : customFrequency < 5000 ? "Região aguda" : "Região bem aguda"}</p></div>
+            <span className="frequency-orb" aria-hidden="true"><i /><i /><i /></span>
+          </div>
+
+          <div className="frequency-presets" role="group" aria-label="Frequências de referência">
+            {[250, 500, 1000, 2000, 4000, 6000, 8000].map((frequency) => (
+              <button key={frequency} className={customFrequency === frequency ? "active" : ""} onClick={() => setCustomFrequency(frequency)}>{frequency >= 1000 ? `${frequency / 1000}k` : frequency}</button>
+            ))}
+          </div>
+
+          <div className="frequency-control">
+            <div className="slider-label"><label htmlFor="custom-frequency">Ajuste fino da frequência</label><span>escala auditiva</span></div>
+            <input id="custom-frequency" type="range" min="0" max="100" step="0.1" value={frequencyToSlider(customFrequency)} onChange={(event) => setCustomFrequency(sliderToFrequency(Number(event.target.value)))} style={{ "--range-progress": `${frequencyToSlider(customFrequency)}%` } as React.CSSProperties} />
+            <div className="frequency-nudge"><button onClick={() => nudgeFrequency(-50)}>− 50 Hz</button><span>125 Hz</span><span>8.000 Hz</span><button onClick={() => nudgeFrequency(50)}>+ 50 Hz</button></div>
+          </div>
+
+          <div className="lab-options-grid">
+            <fieldset>
+              <legend>Formato da onda</legend>
+              <div className="segmented-control">
+                <button className={customWave === "sine" ? "active" : ""} onClick={() => setCustomWave("sine")}><span aria-hidden="true">∿</span> Suave</button>
+                <button className={customWave === "triangle" ? "active" : ""} onClick={() => setCustomWave("triangle")}><span aria-hidden="true">⌃</span> Triangular</button>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Base de conforto</legend>
+              <div className="segmented-control">
+                <button className={customBase === "pink" ? "active" : ""} onClick={() => changeCustomBase("pink")}>Ruído rosa</button>
+                <button className={customBase === "brown" ? "active" : ""} onClick={() => changeCustomBase("brown")}>Ruído marrom</button>
+              </div>
+            </fieldset>
+          </div>
+
+          <div className="lab-sliders">
+            <div className="adjustment-row">
+              <div className="slider-label"><label htmlFor="tone-mix">Presença do tom</label><span>{customToneMix < 18 ? "discreta" : customToneMix < 38 ? "suave" : "mais presente"}</span></div>
+              <input id="tone-mix" type="range" min="0" max="60" value={customToneMix} onChange={(event) => setCustomToneMix(Number(event.target.value))} style={{ "--range-progress": `${(customToneMix / 60) * 100}%` } as React.CSSProperties} />
+              <div className="range-ends"><span>Só ruído</span><span>Tom limitado</span></div>
+            </div>
+            <div className="adjustment-row">
+              <div className="slider-label"><label htmlFor="bandwidth">Faixa ao redor do tom</label><span>{customBandwidth < 34 ? "estreita" : customBandwidth > 68 ? "ampla" : "moderada"}</span></div>
+              <input id="bandwidth" type="range" min="0" max="100" value={customBandwidth} onChange={(event) => setCustomBandwidth(Number(event.target.value))} style={{ "--range-progress": `${customBandwidth}%` } as React.CSSProperties} />
+              <div className="range-ends"><span>Estreita</span><span>Ampla</span></div>
+            </div>
+          </div>
+
+          <div className="lab-actions">
+            <p><span aria-hidden="true">⌁</span> No modo personalizado, o app reduz automaticamente o teto interno para 10%.</p>
+            <div><button className="secondary-action" onClick={saveCustomSound}>{customSaved ? "✓ Salvo neste aparelho" : "Salvar ajuste"}</button><button className="primary-action" onClick={() => chooseSound("custom")}>{selected === "custom" ? "Som selecionado" : "Usar no player"}</button></div>
+          </div>
+        </article>
       </section>
 
       <section className="journal-section" id="diario">

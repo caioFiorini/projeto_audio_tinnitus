@@ -1,6 +1,6 @@
 # Brisa
 
-Aplicativo de conforto sonoro e mascaramento para zumbido. Gera ruídos rosa e marrom no próprio navegador, oferece paisagens naturais, temporizador, favoritos e diário de percepção local.
+Aplicativo de conforto sonoro e mascaramento para zumbido. Gera ruídos rosa e marrom no próprio navegador, oferece paisagens naturais, temporizador, favoritos, diário de percepção local e um laboratório para criar sons personalizados entre 125 e 8.000 Hz.
 
 > O Brisa é uma ferramenta de apoio e não substitui avaliação médica, otorrinolaringológica ou audiológica.
 
