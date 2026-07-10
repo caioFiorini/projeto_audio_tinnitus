@@ -1,6 +1,13 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
+import { PwaRegister } from "./pwa-register";
 import "./globals.css";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#f7faf8",
+};
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -10,8 +17,19 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase,
+    applicationName: "Brisa",
     title: "Brisa — conforto sonoro para zumbido",
     description: "Paisagens sonoras suaves, ajustes de ruído, temporizador e diário de percepção para momentos de mais conforto.",
+    manifest: "/manifest.webmanifest",
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "default",
+      title: "Brisa",
+    },
+    icons: {
+      icon: [{ url: "/app-icon.png", type: "image/png", sizes: "512x512" }],
+      apple: [{ url: "/app-icon.png", type: "image/png", sizes: "512x512" }],
+    },
     openGraph: {
       title: "Brisa — conforto sonoro para zumbido",
       description: "Um pouco de calma, um som de cada vez.",
@@ -31,7 +49,10 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        {children}
+        <PwaRegister />
+      </body>
     </html>
   );
 }
