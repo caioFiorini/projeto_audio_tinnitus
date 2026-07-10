@@ -65,6 +65,16 @@ const sounds: Array<{
 ];
 
 const perceptionLabels = ["Muito leve", "Leve", "Moderado", "Intenso", "Muito intenso"];
+const GENERAL_VOLUME_MAX = 20;
+const CUSTOM_VOLUME_MAX = 6;
+const GENERAL_GAIN_CEILING = 0.045;
+const CUSTOM_GAIN_CEILING = 0.012;
+
+function targetGain(sound: SoundId, volume: number) {
+  const maximum = sound === "custom" ? CUSTOM_VOLUME_MAX : GENERAL_VOLUME_MAX;
+  const ceiling = sound === "custom" ? CUSTOM_GAIN_CEILING : GENERAL_GAIN_CEILING;
+  return (Math.min(volume, maximum) / maximum) * ceiling;
+}
 
 function makeNoiseBuffer(ctx: AudioContext, id: NoiseId) {
   const seconds = 10;
@@ -142,7 +152,7 @@ function formatTime(seconds: number) {
 export default function Home() {
   const [selected, setSelected] = useState<SoundId>("pink");
   const [isPlaying, setIsPlaying] = useState(false);
-  const [volume, setVolume] = useState(10);
+  const [volume, setVolume] = useState(5);
   const [tone, setTone] = useState(48);
   const [texture, setTexture] = useState(28);
   const [timerMinutes, setTimerMinutes] = useState(30);
@@ -153,6 +163,8 @@ export default function Home() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [journalSaved, setJournalSaved] = useState(false);
   const [showSafety, setShowSafety] = useState(false);
+  const [showSafetyGate, setShowSafetyGate] = useState(false);
+  const [safetyAccepted, setSafetyAccepted] = useState(false);
   const [customFrequency, setCustomFrequency] = useState(2000);
   const [customWave, setCustomWave] = useState<CustomWave>("sine");
   const [customBase, setCustomBase] = useState<CustomNoiseBase>("pink");
@@ -177,6 +189,7 @@ export default function Home() {
       const savedFavorites = localStorage.getItem("brisa-favorites");
       const savedEntries = localStorage.getItem("brisa-journal");
       const savedCustom = localStorage.getItem("brisa-custom-sound");
+      setSafetyAccepted(localStorage.getItem("brisa-safety-v2") === "accepted");
       if (savedFavorites) setFavorites(JSON.parse(savedFavorites));
       if (savedEntries) setEntries(JSON.parse(savedEntries));
       if (savedCustom) {
@@ -209,8 +222,7 @@ export default function Home() {
   }, [isPlaying]);
 
   useEffect(() => {
-    const effectiveVolume = selected === "custom" ? Math.min(volume, 10) : volume;
-    const target = (effectiveVolume / 35) * 0.12;
+    const target = targetGain(selected, volume);
     const ctx = contextRef.current;
     const master = masterRef.current;
     if (ctx && master && isPlaying) {
@@ -281,7 +293,7 @@ export default function Home() {
     const customOscillator = customOscillatorRef.current;
     if (!ctx || !source) return;
 
-    const delay = withFade ? 0.32 : 0.03;
+    const delay = withFade ? 0.45 : 0.05;
     if (master) {
       master.gain.cancelScheduledValues(ctx.currentTime);
       master.gain.linearRampToValueAtTime(0, ctx.currentTime + delay);
@@ -328,11 +340,11 @@ export default function Home() {
     filter.frequency.value = soundId === "custom" ? customFrequency : naturalFrequencies[soundId];
     filter.Q.value = soundId === "custom" ? 0.5 + ((100 - customBandwidth) / 100) * 5.5 : 0.45;
     master.gain.value = 0;
-    compressor.threshold.value = -22;
-    compressor.knee.value = 12;
-    compressor.ratio.value = 4;
-    compressor.attack.value = 0.02;
-    compressor.release.value = 0.35;
+    compressor.threshold.value = -30;
+    compressor.knee.value = 5;
+    compressor.ratio.value = 20;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
     lfo.frequency.value = soundId === "ocean" ? 0.09 : 0.16;
     lfoGain.gain.value = (texture / 100) * 0.018;
 
@@ -357,9 +369,8 @@ export default function Home() {
     source.start();
     lfo.start();
     customOscillator?.start();
-    const effectiveVolume = soundId === "custom" ? Math.min(volume, 10) : volume;
-    const target = (effectiveVolume / 35) * 0.12;
-    master.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.8);
+    const target = targetGain(soundId, volume);
+    master.gain.linearRampToValueAtTime(target, ctx.currentTime + 1.2);
 
     sourceRef.current = source;
     filterRef.current = filter;
@@ -376,7 +387,12 @@ export default function Home() {
       setIsPlaying(false);
       return;
     }
-    if (remaining === 0) setRemaining(timerMinutes * 60);
+    if (!safetyAccepted) {
+      setShowSafetyGate(true);
+      return;
+    }
+    const safeMinutes = selected === "custom" ? Math.min(timerMinutes, 10) : timerMinutes;
+    if (remaining === 0 || (selected === "custom" && remaining > 10 * 60)) setRemaining(safeMinutes * 60);
     await startAudio();
     setIsPlaying(true);
   }
@@ -388,15 +404,30 @@ export default function Home() {
     setSelected(id);
     if (id === "brown") setTone(36);
     if (id === "pink") setTone(48);
-    if (id === "custom" && volume > 10) setVolume(8);
+    if (id === "custom") {
+      if (volume > CUSTOM_VOLUME_MAX) setVolume(4);
+      setTimerMinutes(5);
+      setRemaining(5 * 60);
+    } else if (selected === "custom" && timerMinutes <= 10) {
+      setTimerMinutes(30);
+      setRemaining(30 * 60);
+    }
     if (wasPlaying) {
       await startAudio(id);
     }
   }
 
   function setTimer(minutes: number) {
-    setTimerMinutes(minutes);
-    setRemaining(minutes * 60);
+    const safeMinutes = selected === "custom" ? Math.min(minutes, 10) : minutes;
+    setTimerMinutes(safeMinutes);
+    setRemaining(safeMinutes * 60);
+  }
+
+  function acceptSafetyGate() {
+    localStorage.setItem("brisa-safety-v2", "accepted");
+    setSafetyAccepted(true);
+    setVolume(selected === "custom" ? 2 : 3);
+    setShowSafetyGate(false);
   }
 
   function toggleFavorite(id: SoundId) {
@@ -472,10 +503,28 @@ export default function Home() {
         <aside className="safety-banner" role="note">
           <div>
             <strong>Som de apoio, não tratamento médico.</strong>
-            <p>Comece quase inaudível e mantenha abaixo do zumbido. Se houver piora, dor, pressão ou tontura, pare. Não altere medicação sem falar com o profissional que prescreveu.</p>
+            <p>O app reduz a saída digital, mas não mede dB nem controla o volume físico do aparelho. Comece quase inaudível e abaixo do zumbido. Se houver piora, dor, pressão ou tontura, pare.</p>
           </div>
           <button onClick={() => setShowSafety(false)} aria-label="Fechar aviso">×</button>
         </aside>
+      )}
+
+      {showSafetyGate && (
+        <div className="safety-gate" role="dialog" aria-modal="true" aria-labelledby="safety-gate-title">
+          <div className="safety-gate-card">
+            <span className="gate-icon" aria-hidden="true">◖</span>
+            <span className="eyebrow"><span /> PROTEÇÃO AUDITIVA</span>
+            <h2 id="safety-gate-title">Antes de iniciar qualquer som</h2>
+            <p>O Brisa limita o sinal dentro do aplicativo, mas celulares e fones têm potências diferentes. Por isso, nenhum app consegue garantir sozinho um nível seguro em dB.</p>
+            <ol>
+              <li><strong>Abaixe o volume físico</strong> do celular ou computador até o mínimo.</li>
+              <li>Inicie o som e aumente somente até ficar <strong>quase audível</strong>, nunca para cobrir completamente o zumbido.</li>
+              <li>Use em ambiente tranquilo e faça pausas. Se houver desconforto, piora, pressão, dor ou tontura, <strong>pare imediatamente</strong>.</li>
+            </ol>
+            <div className="gate-note"><span aria-hidden="true">!</span> Frequências personalizadas ficam limitadas a sessões de 5 ou 10 minutos e têm um teto ainda menor.</div>
+            <div className="gate-actions"><button className="secondary-action" onClick={() => setShowSafetyGate(false)}>Agora não</button><button className="primary-action" onClick={acceptSafetyGate}>Entendi e baixei o aparelho</button></div>
+          </div>
+        </div>
       )}
 
       <section className="hero" id="inicio">
@@ -521,11 +570,11 @@ export default function Home() {
           <div className="volume-control">
             <span aria-hidden="true">◖</span>
             <label className="sr-only" htmlFor="volume">Volume interno</label>
-            <input id="volume" type="range" min="0" max={selected === "custom" ? 10 : 35} value={volume} onChange={(event) => setVolume(Number(event.target.value))} style={{ "--range-progress": `${(volume / (selected === "custom" ? 10 : 35)) * 100}%` } as React.CSSProperties} />
+            <input id="volume" type="range" min="0" max={selected === "custom" ? CUSTOM_VOLUME_MAX : GENERAL_VOLUME_MAX} value={volume} onChange={(event) => setVolume(Number(event.target.value))} style={{ "--range-progress": `${(volume / (selected === "custom" ? CUSTOM_VOLUME_MAX : GENERAL_VOLUME_MAX)) * 100}%` } as React.CSSProperties} />
             <span aria-hidden="true">◗</span>
             <output>{volume}%</output>
           </div>
-          <p className="volume-note"><span aria-hidden="true">⌁</span> {selected === "custom" ? "Modo personalizado · teto interno reduzido a 10%" : "Limite interno conservador · comece quase inaudível"}</p>
+          <p className="volume-note"><span aria-hidden="true">⌁</span> {selected === "custom" ? "Modo personalizado · teto interno reduzido a 6%" : "Teto digital reduzido · o volume físico também deve ficar baixo"}</p>
         </article>
 
         <div className="control-column">
@@ -535,7 +584,7 @@ export default function Home() {
               <strong className="time-left">{formatTime(remaining)}</strong>
             </div>
             <div className="timer-options" role="group" aria-label="Duração da sessão">
-              {[5, 15, 30, 45, 60].map((minutes) => (
+              {(selected === "custom" ? [5, 10] : [15, 30, 45, 60]).map((minutes) => (
                 <button key={minutes} className={timerMinutes === minutes ? "active" : ""} onClick={() => setTimer(minutes)}>{minutes} min</button>
               ))}
             </div>
@@ -650,7 +699,7 @@ export default function Home() {
           </div>
 
           <div className="lab-actions">
-            <p><span aria-hidden="true">⌁</span> No modo personalizado, o app reduz automaticamente o teto interno para 10%.</p>
+            <p><span aria-hidden="true">⌁</span> No modo personalizado, o app reduz automaticamente o teto interno para 6% e limita a sessão a 10 minutos.</p>
             <div><button className="secondary-action" onClick={saveCustomSound}>{customSaved ? "✓ Salvo neste aparelho" : "Salvar ajuste"}</button><button className="primary-action" onClick={() => chooseSound("custom")}>{selected === "custom" ? "Som selecionado" : "Usar no player"}</button></div>
           </div>
         </article>

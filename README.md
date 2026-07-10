@@ -4,6 +4,12 @@ Aplicativo de conforto sonoro e mascaramento para zumbido. Gera ruídos rosa e m
 
 > O Brisa é uma ferramenta de apoio e não substitui avaliação médica, otorrinolaringológica ou audiológica.
 
+## Proteção auditiva
+
+O player usa teto digital reduzido, limitador de picos, entrada e saída graduais e confirmação de segurança antes do primeiro áudio. Frequências personalizadas têm teto menor e sessões limitadas a 5 ou 10 minutos.
+
+Essas barreiras reduzem risco, mas não permitem afirmar um nível absoluto em dB: a pressão sonora final depende do celular, computador, caixa, fone e volume físico do aparelho. O usuário deve começar no mínimo, manter o som quase audível e interromper diante de qualquer desconforto ou piora.
+
 ## Desenvolvimento
 
 Requisitos: Node.js 22.13 ou superior e pnpm.
